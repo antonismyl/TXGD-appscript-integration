@@ -1,0 +1,561 @@
+// Global variables
+let currentConfig = {};
+let updateInterval = null;
+
+// Initialize the application
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('Transifex-Google Drive Integration loaded');
+  initializeApp();
+});
+
+/**
+ * Initialize the application
+ */
+function initializeApp() {
+  setupEventListeners();
+  loadConfiguration();
+  startRealTimeUpdates();
+}
+
+/**
+ * Setup event listeners
+ */
+function setupEventListeners() {
+  // Settings
+  document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+  document.getElementById('testConnectionBtn').addEventListener('click', testConnection);
+  
+  // Folders
+  document.getElementById('addFolderBtn').addEventListener('click', () => openModal('addFolderModal'));
+  document.getElementById('addFolderForm').addEventListener('submit', addFolder);
+  
+  // General
+  document.getElementById('refreshBtn').addEventListener('click', refreshData);
+  document.getElementById('clearLogBtn').addEventListener('click', clearActivityLog);
+  document.getElementById('notificationClose').addEventListener('click', hideNotification);
+  
+  // Modal close buttons
+  document.querySelectorAll('.modal-close').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const modal = e.target.closest('.modal');
+      closeModal(modal.id);
+    });
+  });
+  
+  // Filter buttons
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      filterFiles(e.target.dataset.filter);
+    });
+  });
+  
+  // Click outside modal to close
+  document.querySelectorAll('.modal').forEach(modal => {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closeModal(modal.id);
+      }
+    });
+  });
+}
+
+/**
+ * Load configuration from server
+ */
+function loadConfiguration() {
+  showLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(config) {
+      currentConfig = config;
+      populateUI(config);
+      showLoading(false);
+    })
+    .withFailureHandler(function(error) {
+      console.error('Error loading configuration:', error);
+      showNotification('Error loading configuration: ' + error.message, 'error');
+      showLoading(false);
+    })
+    .getConfigForUI();
+}
+
+/**
+ * Populate UI with configuration data
+ */
+function populateUI(config) {
+  // Settings
+  if (config.settings) {
+    document.getElementById('apiToken').value = config.settings.apiTokenMasked || '';
+    document.getElementById('webhookSecret').value = config.settings.webhookSecret || '';
+    document.getElementById('checkInterval').value = config.settings.checkInterval || 10;
+    document.getElementById('webhookUrl').value = config.settings.webhookUrl || '';
+  }
+  
+  // Folders
+  populateFolders(config.folders || []);
+  
+  // File status
+  populateFileStatus(config.fileMappings || []);
+  
+  // Activity log
+  populateActivityLog(config.activityLog || []);
+}
+
+/**
+ * Populate folders section
+ */
+function populateFolders(folders) {
+  const container = document.getElementById('foldersContainer');
+  
+  if (folders.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 2rem; color: #666;">
+        <span class="material-icons" style="font-size: 3rem; margin-bottom: 1rem;">folder_open</span>
+        <p>No source folders configured yet.</p>
+        <p>Click "Add Folder" to get started.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  container.innerHTML = folders.map(folder => `
+    <div class="folder-item" data-folder-id="${folder.id}">
+      <div class="folder-header">
+        <h3 class="folder-name">${escapeHtml(folder.name)}</h3>
+        <div class="folder-actions">
+          <button class="btn btn-secondary btn-sm" onclick="editFolder('${folder.id}')">
+            <span class="material-icons">edit</span>
+            Edit
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="deleteFolder('${folder.id}')">
+            <span class="material-icons">delete</span>
+            Delete
+          </button>
+        </div>
+      </div>
+      <div class="folder-details">
+        <div class="folder-detail">
+          <div class="folder-detail-label">Organization</div>
+          <div class="folder-detail-value">${escapeHtml(folder.organization)}</div>
+        </div>
+        <div class="folder-detail">
+          <div class="folder-detail-label">Project</div>
+          <div class="folder-detail-value">${escapeHtml(folder.project)}</div>
+        </div>
+        <div class="folder-detail">
+          <div class="folder-detail-label">Source Folder</div>
+          <div class="folder-detail-value">${escapeHtml(folder.sourceFolder)}</div>
+        </div>
+        <div class="folder-detail">
+          <div class="folder-detail-label">Translations Folder</div>
+          <div class="folder-detail-value">${escapeHtml(folder.translationsFolder)}</div>
+        </div>
+        <div class="folder-detail">
+          <div class="folder-detail-label">File Formats</div>
+          <div class="folder-detail-value">${folder.formats.join(', ').toUpperCase()}</div>
+        </div>
+        <div class="folder-detail">
+          <div class="folder-detail-label">Download Triggers</div>
+          <div class="folder-detail-value">${folder.triggers.join(', ')}</div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+/**
+ * Populate file status section
+ */
+function populateFileStatus(fileMappings) {
+  const container = document.getElementById('fileStatusContainer');
+  
+  if (fileMappings.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 2rem; color: #666;">
+        <span class="material-icons" style="font-size: 3rem; margin-bottom: 1rem;">description</span>
+        <p>No files detected yet.</p>
+        <p>Add source folders and files will appear here automatically.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  container.innerHTML = fileMappings.map(file => {
+    const hasResource = file.resourceId && file.resourceId !== '';
+    const status = hasResource ? 'active' : 'pending';
+    const statusText = hasResource ? 'Active' : 'Pending Mapping';
+    const fileType = file.fileName.split('.').pop().toLowerCase();
+    const icon = fileType === 'docx' ? 'description' : 'table_chart';
+    
+    return `
+      <div class="file-item" data-file-id="${file.fileId}" data-status="${status}">
+        <div class="file-info">
+          <div class="file-icon">
+            <span class="material-icons">${icon}</span>
+          </div>
+          <div class="file-details">
+            <h4>${escapeHtml(file.fileName)}</h4>
+            <p>Last modified: ${new Date(file.lastModified || Date.now()).toLocaleString()}</p>
+          </div>
+        </div>
+        <div class="file-status status-${status}">
+          ${statusText}
+        </div>
+        ${!hasResource ? `
+          <button class="btn btn-primary btn-sm" onclick="mapFileToResource('${file.fileId}')">
+            <span class="material-icons">link</span>
+            Map Resource
+          </button>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+/**
+ * Populate activity log
+ */
+function populateActivityLog(activities) {
+  const container = document.getElementById('activityLogContainer');
+  
+  if (activities.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 2rem; color: #666;">
+        <span class="material-icons" style="font-size: 3rem; margin-bottom: 1rem;">history</span>
+        <p>No activity yet.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  container.innerHTML = activities.map(activity => `
+    <div class="activity-item">${escapeHtml(activity)}</div>
+  `).join('');
+}
+
+/**
+ * Save settings
+ */
+function saveSettings() {
+  const apiToken = document.getElementById('apiToken').value.trim();
+  const webhookSecret = document.getElementById('webhookSecret').value.trim();
+  const checkInterval = parseInt(document.getElementById('checkInterval').value);
+  
+  if (!apiToken) {
+    showNotification('API Token is required', 'error');
+    return;
+  }
+  
+  showLoading(true);
+  
+  const updatedConfig = {
+    ...currentConfig,
+    settings: {
+      ...currentConfig.settings,
+      apiToken: apiToken,
+      webhookSecret: webhookSecret,
+      checkInterval: checkInterval
+    }
+  };
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        currentConfig = updatedConfig;
+        showNotification('Settings saved successfully', 'success');
+        loadConfiguration(); // Reload to get masked token
+      } else {
+        showNotification('Error saving settings: ' + result.message, 'error');
+      }
+      showLoading(false);
+    })
+    .withFailureHandler(function(error) {
+      console.error('Error saving settings:', error);
+      showNotification('Error saving settings: ' + error.message, 'error');
+      showLoading(false);
+    })
+    .saveConfigFromUI(updatedConfig);
+}
+
+/**
+ * Test connection to Transifex
+ */
+function testConnection() {
+  const apiToken = document.getElementById('apiToken').value.trim();
+  
+  if (!apiToken || apiToken.includes('••••••••')) {
+    showNotification('Please enter a valid API token first', 'error');
+    return;
+  }
+  
+  showLoading(true);
+  showNotification('Testing connection to Transifex...', 'info');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      showLoading(false);
+      if (result.success) {
+        showNotification(`✅ ${result.message}`, 'success');
+      } else {
+        showNotification(`❌ ${result.message}`, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      showLoading(false);
+      showNotification('Connection test failed: ' + error.message, 'error');
+    })
+    .testConnectionFromUI(apiToken);
+}
+
+/**
+ * Add new folder
+ */
+function addFolder(event) {
+  event.preventDefault();
+  
+  const formData = new FormData(event.target);
+  const formats = Array.from(document.querySelectorAll('input[name="formats"]:checked')).map(cb => cb.value);
+  const triggers = Array.from(document.querySelectorAll('input[name="triggers"]:checked')).map(cb => cb.value);
+  
+  if (formats.length === 0) {
+    showNotification('Please select at least one file format', 'error');
+    return;
+  }
+  
+  if (triggers.length === 0) {
+    showNotification('Please select at least one download trigger', 'error');
+    return;
+  }
+  
+  const newFolder = {
+    id: 'folder_' + Date.now(),
+    name: formData.get('folderName'),
+    sourceFolder: formData.get('sourceFolderId'),
+    translationsFolder: formData.get('translationsFolderId'),
+    organization: formData.get('organization'),
+    project: formData.get('project'),
+    formats: formats,
+    triggers: triggers
+  };
+  
+  const updatedConfig = {
+    ...currentConfig,
+    folders: [...(currentConfig.folders || []), newFolder]
+  };
+  
+  showLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        currentConfig = updatedConfig;
+        populateFolders(updatedConfig.folders);
+        closeModal('addFolderModal');
+        document.getElementById('addFolderForm').reset();
+        showNotification('Folder added successfully', 'success');
+      } else {
+        showNotification('Error adding folder: ' + result.message, 'error');
+      }
+      showLoading(false);
+    })
+    .withFailureHandler(function(error) {
+      console.error('Error adding folder:', error);
+      showNotification('Error adding folder: ' + error.message, 'error');
+      showLoading(false);
+    })
+    .saveConfigFromUI(updatedConfig);
+}
+
+/**
+ * Delete folder
+ */
+function deleteFolder(folderId) {
+  if (!confirm('Are you sure you want to delete this folder configuration?')) {
+    return;
+  }
+  
+  const updatedConfig = {
+    ...currentConfig,
+    folders: currentConfig.folders.filter(f => f.id !== folderId)
+  };
+  
+  showLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        currentConfig = updatedConfig;
+        populateFolders(updatedConfig.folders);
+        showNotification('Folder deleted successfully', 'success');
+      } else {
+        showNotification('Error deleting folder: ' + result.message, 'error');
+      }
+      showLoading(false);
+    })
+    .withFailureHandler(function(error) {
+      console.error('Error deleting folder:', error);
+      showNotification('Error deleting folder: ' + error.message, 'error');
+      showLoading(false);
+    })
+    .saveConfigFromUI(updatedConfig);
+}
+
+/**
+ * Edit folder (placeholder)
+ */
+function editFolder(folderId) {
+  showNotification('Edit folder feature coming soon!', 'info');
+}
+
+/**
+ * Map file to resource
+ */
+function mapFileToResource(fileId) {
+  const resourceId = prompt('Enter the Transifex resource ID (e.g., o:org:p:project:r:resource):');
+  
+  if (!resourceId) {
+    return;
+  }
+  
+  if (!resourceId.includes(':')) {
+    showNotification('Invalid resource ID format. Should be like: o:org:p:project:r:resource', 'error');
+    return;
+  }
+  
+  showLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showNotification('File mapped successfully', 'success');
+        loadConfiguration(); // Reload to show updated status
+      } else {
+        showNotification('Error mapping file: ' + result.message, 'error');
+      }
+      showLoading(false);
+    })
+    .withFailureHandler(function(error) {
+      showNotification('Error mapping file: ' + error.message, 'error');
+      showLoading(false);
+    })
+    .updateFileMappingResource(fileId, resourceId);
+}
+
+/**
+ * Filter files
+ */
+function filterFiles(filter) {
+  const fileItems = document.querySelectorAll('.file-item');
+  
+  fileItems.forEach(item => {
+    const status = item.dataset.status;
+    const shouldShow = filter === 'all' || status === filter;
+    item.style.display = shouldShow ? 'flex' : 'none';
+  });
+}
+
+/**
+ * Clear activity log
+ */
+function clearActivityLog() {
+  if (!confirm('Are you sure you want to clear the activity log?')) {
+    return;
+  }
+  
+  showLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        populateActivityLog([]);
+        showNotification('Activity log cleared successfully', 'success');
+      } else {
+        showNotification('Error clearing log: ' + result.message, 'error');
+      }
+      showLoading(false);
+    })
+    .withFailureHandler(function(error) {
+      showNotification('Error clearing log: ' + error.message, 'error');
+      showLoading(false);
+    })
+    .clearActivityLogFromUI();
+}
+
+/**
+ * Refresh data
+ */
+function refreshData() {
+  loadConfiguration();
+}
+
+/**
+ * Start real-time updates
+ */
+function startRealTimeUpdates() {
+  // Update every 30 seconds
+  updateInterval = setInterval(() => {
+    // Only update if not currently loading
+    if (!document.getElementById('loadingIndicator').classList.contains('active')) {
+      loadConfiguration();
+    }
+  }, 30000);
+}
+
+/**
+ * Stop real-time updates
+ */
+function stopRealTimeUpdates() {
+  if (updateInterval) {
+    clearInterval(updateInterval);
+    updateInterval = null;
+  }
+}
+
+// Modal functions
+function openModal(modalId) {
+  document.getElementById(modalId).classList.add('active');
+}
+
+function closeModal(modalId) {
+  document.getElementById(modalId).classList.remove('active');
+}
+
+// Utility functions
+function showLoading(show) {
+  const loader = document.getElementById('loadingIndicator');
+  if (show) {
+    loader.classList.add('active');
+  } else {
+    loader.classList.remove('active');
+  }
+}
+
+function showNotification(message, type = 'info') {
+  const notification = document.getElementById('notification');
+  const messageEl = document.getElementById('notificationMessage');
+  
+  messageEl.textContent = message;
+  notification.className = `notification active ${type}`;
+  
+  // Auto-hide after 5 seconds
+  setTimeout(() => {
+    hideNotification();
+  }, 5000);
+}
+
+function hideNotification() {
+  document.getElementById('notification').classList.remove('active');
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+  stopRealTimeUpdates();
+});

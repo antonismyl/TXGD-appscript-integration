@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transifex-Google Drive Integration</title>
+  
+  <!-- Material Design CSS -->
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  
+  <style>
+    <?!= include('styles'); ?>
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-content">
+        <h1 class="app-title">
+          <span class="material-icons">sync</span>
+          Transifex-Google Drive Integration
+        </h1>
+        <div class="header-actions">
+          <button id="refreshBtn" class="btn btn-secondary">
+            <span class="material-icons">refresh</span>
+            Refresh
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Loading indicator -->
+    <div id="loadingIndicator" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>Loading...</p>
+    </div>
+
+    <!-- Main content -->
+    <main class="main-content">
+      <!-- Settings Section -->
+      <section class="config-section">
+        <div class="section-header">
+          <h2>
+            <span class="material-icons">settings</span>
+            Settings
+          </h2>
+          <button id="testConnectionBtn" class="btn btn-primary">
+            <span class="material-icons">wifi_protected_setup</span>
+            Test Connection
+          </button>
+        </div>
+        
+        <div class="config-form">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="apiToken">Transifex API Token *</label>
+              <input type="password" id="apiToken" placeholder="Enter your Transifex API token">
+              <small>Get your API token from Transifex Settings > API</small>
+            </div>
+            <div class="form-group">
+              <label for="webhookSecret">Webhook Secret (Optional)</label>
+              <input type="password" id="webhookSecret" placeholder="Optional webhook secret for security">
+            </div>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label for="checkInterval">File Check Interval</label>
+              <select id="checkInterval">
+                <option value="5">Every 5 minutes</option>
+                <option value="10" selected>Every 10 minutes</option>
+                <option value="15">Every 15 minutes</option>
+                <option value="30">Every 30 minutes</option>
+                <option value="60">Every hour</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="webhookUrl">Webhook URL</label>
+              <input type="text" id="webhookUrl" readonly>
+              <small>Configure this URL in your Transifex project webhooks</small>
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button id="saveSettingsBtn" class="btn btn-primary">
+              <span class="material-icons">save</span>
+              Save Settings
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Folders Section -->
+      <section class="config-section">
+        <div class="section-header">
+          <h2>
+            <span class="material-icons">folder</span>
+            Source Folders
+          </h2>
+          <button id="addFolderBtn" class="btn btn-primary">
+            <span class="material-icons">add</span>
+            Add Folder
+          </button>
+        </div>
+        
+        <div id="foldersContainer" class="folders-container">
+          <!-- Folders will be loaded here -->
+        </div>
+      </section>
+
+      <!-- File Status Section -->
+      <section class="config-section">
+        <div class="section-header">
+          <h2>
+            <span class="material-icons">description</span>
+            File Status
+          </h2>
+          <div class="status-filters">
+            <button class="filter-btn active" data-filter="all">All Files</button>
+            <button class="filter-btn" data-filter="pending">Pending Mapping</button>
+            <button class="filter-btn" data-filter="active">Active</button>
+          </div>
+        </div>
+        
+        <div id="fileStatusContainer" class="file-status-container">
+          <!-- File status will be loaded here -->
+        </div>
+      </section>
+
+      <!-- Activity Log Section -->
+      <section class="config-section">
+        <div class="section-header">
+          <h2>
+            <span class="material-icons">history</span>
+            Activity Log
+          </h2>
+          <button id="clearLogBtn" class="btn btn-secondary">
+            <span class="material-icons">clear_all</span>
+            Clear Log
+          </button>
+        </div>
+        
+        <div id="activityLogContainer" class="activity-log-container">
+          <!-- Activity log will be loaded here -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Add Folder Modal -->
+    <div id="addFolderModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Add Source Folder</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="addFolderForm">
+            <div class="form-group">
+              <label for="folderName">Folder Name *</label>
+              <input type="text" id="folderName" required placeholder="e.g., Marketing Materials">
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label for="sourceFolderId">Source Folder ID *</label>
+                <input type="text" id="sourceFolderId" required placeholder="Google Drive folder ID">
+                <small>Find this in the folder URL: /folders/[FOLDER_ID]</small>
+              </div>
+              <div class="form-group">
+                <label for="translationsFolderId">Translations Folder ID *</label>
+                <input type="text" id="translationsFolderId" required placeholder="Google Drive folder ID">
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label for="organization">Transifex Organization *</label>
+                <input type="text" id="organization" required placeholder="your-org-slug">
+              </div>
+              <div class="form-group">
+                <label for="project">Transifex Project *</label>
+                <input type="text" id="project" required placeholder="your-project-slug">
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label>File Formats</label>
+              <div class="checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" name="formats" value="docx" checked>
+                  <span class="checkmark"></span>
+                  DOCX (Google Docs)
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" name="formats" value="xlsx" checked>
+                  <span class="checkmark"></span>
+                  XLSX (Google Sheets)
+                </label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label>Download Triggers</label>
+              <div class="checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" name="triggers" value="translated" checked>
+                  <span class="checkmark"></span>
+                  100% Translated
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" name="triggers" value="reviewed">
+                  <span class="checkmark"></span>
+                  100% Reviewed
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" name="triggers" value="proofread">
+                  <span class="checkmark"></span>
+                  100% Proofread
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" name="triggers" value="updated">
+                  <span class="checkmark"></span>
+                  Translation Updated
+                </label>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('addFolderModal')">Cancel</button>
+          <button type="submit" form="addFolderForm" class="btn btn-primary">Add Folder</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification">
+      <span id="notificationMessage"></span>
+      <button id="notificationClose" class="notification-close">&times;</button>
+    </div>
+  </div>
+
+  <script>
+    <?!= include('script'); ?>
+  </script>
+</body>
+</html>
